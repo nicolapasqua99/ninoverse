@@ -1,0 +1,8 @@
+
+
+
+## Dependencies
+
+rust toolchain
+
+cmake (to make kafka works)
