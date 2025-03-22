@@ -55,6 +55,7 @@ message "Checking build results"
 LOG_FILE_LAST_LINE_CONTENT=$(tail -n 1 $LOG_FILE_NAME)
 if [[ $LOG_FILE_LAST_LINE_CONTENT == *"ERROR"* ]]; then
     message "Error occured while building the image, aborting."
+    message "$LOG_FILE_LAST_LINE_CONTENT"
 else
     message "Build completed successfull."
     BUILD_SUCCEDED=1

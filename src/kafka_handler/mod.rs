@@ -76,7 +76,7 @@ async fn handle_kafka_message(message: rdkafka::message::OwnedMessage) -> Result
         message.partition(),
         message.offset(),
         key.as_str(),
-        timestamp.to_string(),
+        timestamp.to_string().as_str(),
         payload
     );
     Ok(())
@@ -143,7 +143,7 @@ async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext
         .map(|element| NewTopic {
             name: &element.topic,
             num_partitions: element.partition,
-            replication: TopicReplication::Fixed(0),
+            replication: TopicReplication::Fixed(1),
             config: vec![],
         })
         .collect();
