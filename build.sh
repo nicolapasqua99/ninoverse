@@ -1,48 +1,85 @@
 #!/bin/bash
 
-VERSION="$1"
-DEFAULT_VERSION="0.0.1"
 LINE="--------------------------------------------------------------------------------"
+DEFAULT_VERSION="0.0.1"
+LOG_FILE_NAME=".tmp/build.log"
+VERSION="$1"
+BUILD_SUCCEDED=0
 
-message() {
-    printf "%s\n%s\n%s\n" "$LINE" "$1" "$LINE"
+line() {
+    printf "%s\n" "$LINE"
 }
 
+message() {
+    printf "%s\n" "$1"
+}
+
+line
+# Check if log file exist, otherwise creates it with needed path
+if [ ! -f $LOG_FILE_NAME ]; then 
+    message "Log file missing, creating it."
+    IFS='/' read -ra LOG_FILE_NAME_PARTS <<< "$LOG_FILE_NAME"
+    for ((i = 0; i < ${#LOG_FILE_NAME_PARTS[@]} - 1; i++)); do
+        mkdir -p "${LOG_FILE_NAME_PARTS[i]}"
+        cd "${LOG_FILE_NAME_PARTS[i]}"
+    done
+    cd - > /dev/null
+    touch $LOG_FILE_NAME
+else
+    message "Log file found, proceeding."
+fi
+
+if [ ! -f $LOG_FILE_NAME ]; then 
+    message "Log file creation error, aborting."
+fi
+line
+
+line
 # Check if the version is provided
 if [ -z "$VERSION" ]; then
     message "Version number missing, using default: $DEFAULT_VERSION."
     VERSION=$DEFAULT_VERSION
 fi
-
-# Turning down docker-compose
-message "Turning down docker-compose..."
-docker-compose down
+line
 
 # Build the project
+line
 message "Building the project..."
-docker build -t ninoverse:$VERSION .
+# docker build -t ninoverse:$VERSION --progress=plain . 2>&1 | tee $LOG_FILE_NAME
+docker build -t ninoverse:$VERSION --progress=plain . > $LOG_FILE_NAME 2>&1
+line
 
-# Run the project
-message "Running the project..."
-docker-compose up -d
+# Exit if the build encountered an error
+line
+message "Checking build results"
+LOG_FILE_LAST_LINE_CONTENT=$(tail -n 1 $LOG_FILE_NAME)
+if [[ $LOG_FILE_LAST_LINE_CONTENT == *"ERROR"* ]]; then
+    message "Error occured while building the image, aborting."
+else
+    message "Build completed successfull."
+    BUILD_SUCCEDED=1
+fi
+line
 
-# Check the status
-message "Checking the status..."
-docker-compose ps
+if [ $BUILD_SUCCEDED -eq 1 ]; then
+    line
+    message "Turning down docker-compose..."
+    docker-compose down
+    line
+    message "Running the project..."
+    docker-compose up -d
+    line
+    message "Checking the status..."
+    docker-compose ps
+    line
+fi
 
-# Wait for 10 seconds
-message "Waiting for 10 seconds to let kafka start..."
-sleep 10
-
-# Creating kafka topics
-message "Creating kafka topics..."
-docker exec ninoverse-broker-1 /opt/kafka/bin/kafka-topics.sh --create --topic ninoverse --bootstrap-server broker:9092 --partitions 1 --replication-factor 1
-
-# Done
-message "Done."
-
+line
 message "Memory occupied by docker:"
 docker system df
+line
 
-message "PC memory:"
-df -h
+line
+message "Memory available on this pc:"
+df -h | grep /home
+line
