@@ -106,7 +106,7 @@ where
 
     // Parse headers
     let mut headers = http::HeaderMap::new();
-    parse_headers(&mut headers, &mut lines);
+    parse_headers(&mut headers, &mut lines)?;
 
     // Parse the body
     let body: T = if method == Method::POST && lines.clone().count() > 0 {

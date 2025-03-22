@@ -76,7 +76,7 @@ async fn handle_kafka_message(message: rdkafka::message::OwnedMessage) -> Result
         message.partition(),
         message.offset(),
         key.as_str(),
-        timestamp,
+        timestamp.to_string(),
         payload
     );
     Ok(())

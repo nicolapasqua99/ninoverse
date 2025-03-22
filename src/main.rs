@@ -18,14 +18,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>>{
     println!("MAIN: Starting program.");
     configuration::test_configuration().expect("Configuration error");
     println!("MAIN: Initialize DB");
     let pool = db::init_db().await.expect("Database error");
     let tcp_listener_thread_handler = tokio::spawn(async {
         println!("MAIN: Starting TCP listener thread.");
-        init_listener(pool);
+        init_listener(pool).expect("MAIN: Error occured in TCP_LISTENER.");
     });
     let kafka_thread_handler = tokio::spawn(async {
         println!("MAIN: Starting KAFKA thread.");
@@ -33,17 +33,19 @@ async fn main() {
     });
 
     tokio::try_join!(tcp_listener_thread_handler, kafka_thread_handler).expect("MAIN: Some error occured in the thread.");
+    Ok(())
 }
 
-fn init_listener(pool: Arc<Pool<Postgres>>) {
+fn init_listener(pool: Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
     let listener =
         TcpListener::bind(format!("0.0.0.0:{}", configuration::get_self_port())).expect("TCP_LISTENER_INIT: Error while initializing the TCP Listener.");
     for stream in listener.incoming() {
         let stream = stream.expect("TCP_LISTENER: Error in stream while receiving a message.");
         // thread::spawn(|| {
-        handle_client(stream, &pool);
+        handle_client(stream, &pool)?;
         // });
     }
+    Ok(())
 }
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -71,8 +73,9 @@ impl Default for TestFoo {
     }
 }
 
-fn handle_client(mut stream: TcpStream, pool: &Arc<Pool<Postgres>>) {
-    let request: Request<()> = http_handler::read_from_stream(&mut stream);
+fn handle_client(mut stream: TcpStream, pool: &Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
+    let request: Request<()> = http_handler::read_from_stream(&mut stream)?;
     println!("Extracted value: {:?}", request.body());
-    api::forward_incoming_request(request, pool, stream);
+    api::forward_incoming_request(request, pool, stream)?;
+    Ok(())
 }
