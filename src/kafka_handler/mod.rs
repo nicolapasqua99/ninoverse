@@ -9,7 +9,7 @@ use rand::Rng;
 use rdkafka::{
     ClientConfig, Message,
     admin::{AdminClient, NewTopic, TopicReplication},
-    consumer::{StreamConsumer, Consumer},
+    consumer::{Consumer, StreamConsumer},
     error::KafkaError,
     producer::{FutureProducer, FutureRecord},
 };
@@ -18,13 +18,15 @@ use futures::TryStreamExt;
 
 use structs::KafkaNinoverseBrokerContext;
 
-use crate::configuration;
+use crate::configuration_handler::{
+    get_kafka_admin_options, get_kafka_generic_broker, get_kafka_generic_topic,
+};
 
 async fn create_kafka_consumer() -> Result<StreamConsumer, rdkafka::error::KafkaError> {
     println!("CONSUMER_CREATION: Creating consumer.");
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", "ninoverse")
-        .set("bootstrap.servers", configuration::get_kafka_generic_broker())
+        .set("bootstrap.servers", get_kafka_generic_broker())
         .set("enable.partition.eof", "false")
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "false")
@@ -42,7 +44,7 @@ async fn create_kafka_consumer() -> Result<StreamConsumer, rdkafka::error::Kafka
 async fn create_kafka_producer() -> Result<FutureProducer, rdkafka::error::KafkaError> {
     println!("PRODUCER_CREATION: Creating producer.");
     let producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", configuration::get_kafka_generic_broker())
+        .set("bootstrap.servers", get_kafka_generic_broker())
         .set("message.timeout.ms", "5000")
         .create()
         .expect("PRODUCER_CREATION: Producer creation error");
@@ -109,8 +111,8 @@ async fn init_kafka_producer(mut kafka_thread_channel_receiver: tokio::sync::mps
     }
     println!("PRODUCER: Thread started, sending messages.");
     for i in 0..1000 {
-        let sleep = rand::rng().random_range(500..2000);
-        thread::sleep(std::time::Duration::from_millis(sleep));
+        let sleep = rand::rng().random_range(15..20);
+        thread::sleep(std::time::Duration::from_secs(sleep));
         let queue_timeout = std::time::Duration::from_secs(1);
         let payload = format!("Test message N. {}", i);
         let key = format!("KEY_{}", if i % 2 == 0 { "A" } else { "B" });
@@ -128,7 +130,7 @@ async fn create_kafka_admin_client() -> Result<AdminClient<KafkaNinoverseBrokerC
 {
     println!("ADMIN_CLIENT_CREATION: Creating admin client.");
     let admin_client: AdminClient<KafkaNinoverseBrokerContext> = ClientConfig::new()
-        .set("bootstrap.servers", configuration::get_kafka_generic_broker())
+        .set("bootstrap.servers", get_kafka_generic_broker())
         .create_with_context(KafkaNinoverseBrokerContext {})
         .expect("Failed to create AdminClient with custom context");
     println!("ADMIN_CLIENT_CREATION: Created Admin client.");
@@ -137,7 +139,7 @@ async fn create_kafka_admin_client() -> Result<AdminClient<KafkaNinoverseBrokerC
 
 async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext>) {
     println!("TOPIC_CREATION: Creating topics object.");
-    let kafka_topics = configuration::get_kafka_generic_topic();
+    let kafka_topics = get_kafka_generic_topic();
     let kafka_new_topics: Vec<NewTopic<'_>> = kafka_topics
         .iter()
         .map(|element| NewTopic {
@@ -150,7 +152,7 @@ async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext
     if kafka_new_topics.iter().len() == 0 {
         println!("TOPIC_CREATION: No topic created (no topic creation requested).");
     } else {
-        let options = configuration::get_kafka_admin_options();
+        let options = get_kafka_admin_options();
         println!("TOPIC_CREATION: Sending request to Kafka Admin Client");
         let topic_creation_result_list = admin_client
             .create_topics(&kafka_new_topics, &options)

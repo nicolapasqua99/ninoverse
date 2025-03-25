@@ -1,9 +1,8 @@
 mod api;
-mod configuration;
-mod db;
+mod configuration_handler;
+mod db_handler;
 mod http_handler;
 mod kafka_handler;
-mod migration;
 
 use std::{
     net::{TcpListener, TcpStream},
@@ -20,29 +19,29 @@ use sqlx::{Pool, Postgres};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
     println!("MAIN: Starting program.");
-    configuration::test_configuration().expect("Configuration error");
+    configuration_handler::test_configuration().expect("Configuration error");
     println!("MAIN: Initialize DB");
-    let pool = db::init_db().await.expect("Database error");
-    let tcp_listener_thread_handler = tokio::spawn(async {
+    let pool = db_handler::init_db().await.expect("Database error");
+    let pool_tcp_clone = pool.clone();
+    let tcp_listener_thread_handler = tokio::spawn(async move{
         println!("MAIN: Starting TCP listener thread.");
-        init_listener(pool).expect("MAIN: Error occured in TCP_LISTENER.");
+        init_listener(pool_tcp_clone).await.expect("MAIN: Error occured in TCP_LISTENER.");
     });
     let kafka_thread_handler = tokio::spawn(async {
         println!("MAIN: Starting KAFKA thread.");
         init_kafka().await;
     });
-
     tokio::try_join!(tcp_listener_thread_handler, kafka_thread_handler).expect("MAIN: Some error occured in the thread.");
     Ok(())
 }
 
-fn init_listener(pool: Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
+async fn init_listener(pool: Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
     let listener =
-        TcpListener::bind(format!("0.0.0.0:{}", configuration::get_self_port())).expect("TCP_LISTENER_INIT: Error while initializing the TCP Listener.");
+        TcpListener::bind(format!("0.0.0.0:{}", configuration_handler::get_self_port())).expect("TCP_LISTENER_INIT: Error while initializing the TCP Listener.");
     for stream in listener.incoming() {
         let stream = stream.expect("TCP_LISTENER: Error in stream while receiving a message.");
         // thread::spawn(|| {
-        handle_client(stream, &pool)?;
+        handle_client(stream, &pool).await?;
         // });
     }
     Ok(())
@@ -73,9 +72,7 @@ impl Default for TestFoo {
     }
 }
 
-fn handle_client(mut stream: TcpStream, pool: &Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
+async fn handle_client(mut stream: TcpStream, pool: &Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
     let request: Request<()> = http_handler::read_from_stream(&mut stream)?;
-    println!("Extracted value: {:?}", request.body());
-    api::forward_incoming_request(request, pool, stream)?;
-    Ok(())
+    Ok(api::forward_incoming_request(&request, pool, &mut stream, &api::configuration::get_configuration()).await?)
 }

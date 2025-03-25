@@ -36,21 +36,22 @@ services:
     networks:
       - ninoverse-network
 
-  ninoverse:
-    image: ninoverse:0.0.1
-    ports:
-      - "3000:7878"
-    environment:
-      - SELF_PORT=7878
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=nino
-      - PG_PASSWORD=nino
-      - PG_DB=ninoverse
-      - KAFKA_BROKER=broker:9092
-      - KAFKA_TOPIC=ninoverse:1:1
-    networks:
-      - ninoverse-network
+  # ninoverse:
+  #   image: ninoverse:0.0.1
+  #   ports:
+  #     - "3000:7878"
+  #   environment:
+  #     - SELF_PORT=7878
+  #     - PG_HOST=postgres
+  #     - PG_PORT=5432
+  #     - PG_USER=nino
+  #     - PG_PASSWORD=nino
+  #     - PG_DB=ninoverse
+  #     - KAFKA_BROKER=broker:9092
+  #     - KAFKA_TOPIC=ninoverse:1:1
+  #     - DATABASE_URL=postgres://nino:nino@localhost:5432/ninoverse
+  #   networks:
+  #     - ninoverse-network
 
 networks:
   ninoverse-network:
