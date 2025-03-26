@@ -1,8 +1,11 @@
-mod api;
+mod logger;
 mod configuration_handler;
+mod api_handler;
 mod db_handler;
 mod http_handler;
 mod kafka_handler;
+
+use logger::{log, LogLevel};
 
 use std::{
     net::{TcpListener, TcpStream},
@@ -18,10 +21,11 @@ use sqlx::{Pool, Postgres};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
-    println!("MAIN: Starting program.");
-    configuration_handler::test_configuration().expect("Configuration error");
-    println!("MAIN: Initialize DB");
-    let pool = db_handler::init_db().await.expect("Database error");
+    println!("MAIN: Program started.");
+    println!("MAIN: Testing configuration.");
+    configuration_handler::test_configuration().expect("MAIN: Configuration error.");
+    println!("MAIN: Initializing DB pool.");
+    let pool = db_handler::init_db().await.expect("MAIN: Database initialization error.");
     let pool_tcp_clone = pool.clone();
     let tcp_listener_thread_handler = tokio::spawn(async move{
         println!("MAIN: Starting TCP listener thread.");

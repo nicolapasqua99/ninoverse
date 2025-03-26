@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use sqlx::{Executor, Pool, Postgres};
 
-use super::{UriSection, UriSectionType, error::NinoverseApiError};
+use super::{UriSection, error::NinoverseApiError};
 
 pub fn get_configuration<T>() -> UriSection<T> {
     UriSection {
-        section_type: UriSectionType::Root,
         execute_uri_section: Box::new(|_request, _pool, _stream| Box::pin(async { Ok(()) })),
         next_section: Box::new(|request_uri_parts| {
             let uri_part_str;
@@ -25,7 +24,6 @@ pub fn get_configuration<T>() -> UriSection<T> {
 
 fn get_404_handler<T>() -> UriSection<T> {
     UriSection {
-        section_type: UriSectionType::Leaf,
         execute_uri_section: Box::new(|_request, _pool, stream| {
             Box::pin(async { super::handle_404_request(stream).await })
         }),
@@ -45,7 +43,6 @@ fn get_404_handler<T>() -> UriSection<T> {
 
 fn get_project_handler<T>() -> UriSection<T> {
     UriSection {
-        section_type: UriSectionType::Branch,
         execute_uri_section: Box::new(|_request, _pool, _stream| Box::pin(async { Ok(()) })),
         next_section: Box::new(|request_uri_parts| {
             let uri_part_str;
@@ -64,7 +61,6 @@ fn get_project_handler<T>() -> UriSection<T> {
 
 fn get_add_project_handler<T>() -> UriSection<T> {
     UriSection {
-        section_type: UriSectionType::Branch,
         execute_uri_section: Box::new(|_request, pool, _stream| {
             Box::pin(async { add_project(pool).await })
         }),
