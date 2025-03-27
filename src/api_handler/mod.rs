@@ -1,10 +1,10 @@
 pub mod configuration;
-mod struct;
+mod structs;
 mod error;
 
-pub use struct::*;
+pub use structs::*;
 
-use std::{net::TcpStream, pin::Pin, sync::Arc};
+use std::{net::TcpStream, sync::Arc};
 
 use error::NinoverseApiError;
 use http::{Request, Response, StatusCode};
@@ -13,14 +13,14 @@ use sqlx::{Pool, Postgres};
 use crate::http_handler;
 
 pub async fn forward_incoming_request<T>(
-    request: &Request<T>,
+    request: Request<T>,
+    stream: TcpStream,
     pool: &Arc<Pool<Postgres>>,
-    stream: &mut TcpStream,
     uri_section_configuration: &UriSection<T>,
 ) -> Result<(), NinoverseApiError> {
-    let mut request_uri_parts = http_handler::extract_uri_pieces_vector(request);
+    let request_uri_parts = http_handler::extract_uri_pieces_vector(&request);
     Ok(uri_section_configuration
-        .next(request, pool, stream, &mut request_uri_parts)
+        .next(request, stream, pool, request_uri_parts)
         .await?)
 }
 
