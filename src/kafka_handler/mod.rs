@@ -1,15 +1,11 @@
 pub mod structs;
 
-use std::thread;
-
 use chrono::DateTime;
-
-use rand::Rng;
 
 use rdkafka::{
     ClientConfig, Message,
     admin::{AdminClient, NewTopic, TopicReplication},
-    consumer::{StreamConsumer, Consumer},
+    consumer::{Consumer, StreamConsumer},
     error::KafkaError,
     producer::{FutureProducer, FutureRecord},
 };
@@ -17,14 +13,20 @@ use rdkafka::{
 use futures::TryStreamExt;
 
 use structs::KafkaNinoverseBrokerContext;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use crate::configuration;
+use crate::{
+    KafkaChannelMessage,
+    configuration_handler::{
+        get_kafka_admin_options, get_kafka_generic_broker, get_kafka_generic_topic,
+    },
+};
 
 async fn create_kafka_consumer() -> Result<StreamConsumer, rdkafka::error::KafkaError> {
     println!("CONSUMER_CREATION: Creating consumer.");
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", "ninoverse")
-        .set("bootstrap.servers", configuration::get_kafka_generic_broker())
+        .set("bootstrap.servers", get_kafka_generic_broker())
         .set("enable.partition.eof", "false")
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "false")
@@ -42,7 +44,7 @@ async fn create_kafka_consumer() -> Result<StreamConsumer, rdkafka::error::Kafka
 async fn create_kafka_producer() -> Result<FutureProducer, rdkafka::error::KafkaError> {
     println!("PRODUCER_CREATION: Creating producer.");
     let producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", configuration::get_kafka_generic_broker())
+        .set("bootstrap.servers", get_kafka_generic_broker())
         .set("message.timeout.ms", "5000")
         .create()
         .expect("PRODUCER_CREATION: Producer creation error");
@@ -82,7 +84,7 @@ async fn handle_kafka_message(message: rdkafka::message::OwnedMessage) -> Result
     Ok(())
 }
 
-async fn init_kafka_consumer(kafka_thread_channel_sender: tokio::sync::mpsc::Sender<u8>) {
+async fn init_kafka_consumer(kafka_thread_channel_sender: Sender<u8>) {
     let consumer = create_kafka_consumer()
         .await
         .expect("Error in creating consumer");
@@ -98,7 +100,10 @@ async fn init_kafka_consumer(kafka_thread_channel_sender: tokio::sync::mpsc::Sen
         .expect("CONSUMER: Error in consuming stream");
 }
 
-async fn init_kafka_producer(mut kafka_thread_channel_receiver: tokio::sync::mpsc::Receiver<u8>) {
+async fn init_kafka_producer(
+    mut kafka_thread_channel_receiver: Receiver<u8>,
+    mut kafka_thread_receiver: Receiver<KafkaChannelMessage>,
+) {
     let producer = create_kafka_producer()
         .await
         .expect("Error in creating producer");
@@ -108,12 +113,10 @@ async fn init_kafka_producer(mut kafka_thread_channel_receiver: tokio::sync::mps
         break;
     }
     println!("PRODUCER: Thread started, sending messages.");
-    for i in 0..1000 {
-        let sleep = rand::rng().random_range(500..2000);
-        thread::sleep(std::time::Duration::from_millis(sleep));
+    while let Some(received) = kafka_thread_receiver.recv().await {
         let queue_timeout = std::time::Duration::from_secs(1);
-        let payload = format!("Test message N. {}", i);
-        let key = format!("KEY_{}", if i % 2 == 0 { "A" } else { "B" });
+        let key = received.sender;
+        let payload = format!("Message: {}", received.content);
         let record = FutureRecord::to("ninoverse")
             .payload(payload.as_str())
             .key(key.as_str());
@@ -128,7 +131,7 @@ async fn create_kafka_admin_client() -> Result<AdminClient<KafkaNinoverseBrokerC
 {
     println!("ADMIN_CLIENT_CREATION: Creating admin client.");
     let admin_client: AdminClient<KafkaNinoverseBrokerContext> = ClientConfig::new()
-        .set("bootstrap.servers", configuration::get_kafka_generic_broker())
+        .set("bootstrap.servers", get_kafka_generic_broker())
         .create_with_context(KafkaNinoverseBrokerContext {})
         .expect("Failed to create AdminClient with custom context");
     println!("ADMIN_CLIENT_CREATION: Created Admin client.");
@@ -137,7 +140,7 @@ async fn create_kafka_admin_client() -> Result<AdminClient<KafkaNinoverseBrokerC
 
 async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext>) {
     println!("TOPIC_CREATION: Creating topics object.");
-    let kafka_topics = configuration::get_kafka_generic_topic();
+    let kafka_topics = get_kafka_generic_topic();
     let kafka_new_topics: Vec<NewTopic<'_>> = kafka_topics
         .iter()
         .map(|element| NewTopic {
@@ -150,7 +153,7 @@ async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext
     if kafka_new_topics.iter().len() == 0 {
         println!("TOPIC_CREATION: No topic created (no topic creation requested).");
     } else {
-        let options = configuration::get_kafka_admin_options();
+        let options = get_kafka_admin_options();
         println!("TOPIC_CREATION: Sending request to Kafka Admin Client");
         let topic_creation_result_list = admin_client
             .create_topics(&kafka_new_topics, &options)
@@ -162,18 +165,17 @@ async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext
     }
 }
 
-pub async fn init_kafka() {
+pub async fn init_kafka(kafka_thread_receiver: Receiver<KafkaChannelMessage>) {
     let admin_client = create_kafka_admin_client()
         .await
         .expect("INIT_KAFKA: Admin client creation failed");
     init_kafka_topics(admin_client).await;
-    let (kafka_thread_channel_sender, kafka_thread_channel_receiver) =
-        tokio::sync::mpsc::channel::<u8>(1);
+    let (kafka_thread_channel_sender, kafka_thread_channel_receiver) = channel::<u8>(1);
     let consumer_handle = tokio::spawn(async {
         init_kafka_consumer(kafka_thread_channel_sender).await;
     });
     let producer_handle = tokio::spawn(async {
-        init_kafka_producer(kafka_thread_channel_receiver).await;
+        init_kafka_producer(kafka_thread_channel_receiver, kafka_thread_receiver).await;
     });
     tokio::try_join!(producer_handle, consumer_handle).expect("Error in Kafka threads");
 }

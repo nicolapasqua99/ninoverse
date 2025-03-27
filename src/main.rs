@@ -1,81 +1,77 @@
-mod api;
-mod configuration;
-mod db;
+mod api_handler;
+mod configuration_handler;
+mod db_handler;
 mod http_handler;
 mod kafka_handler;
-mod migration;
+mod logger;
+
+// use logger::{log, LogLevel};
 
 use std::{
     net::{TcpListener, TcpStream},
     sync::Arc,
 };
 
+use actix_web::{App, HttpServer, dev::Server, web};
+use api_handler::{echo, hello};
 use http::Request;
 
 use kafka_handler::init_kafka;
 
-use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
+use tokio::sync::mpsc::Sender;
+
+pub struct KafkaChannelMessage {
+    sender: String,
+    content: String
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>>{
-    println!("MAIN: Starting program.");
-    configuration::test_configuration().expect("Configuration error");
-    println!("MAIN: Initialize DB");
-    let pool = db::init_db().await.expect("Database error");
-    let tcp_listener_thread_handler = tokio::spawn(async {
-        println!("MAIN: Starting TCP listener thread.");
-        init_listener(pool).expect("MAIN: Error occured in TCP_LISTENER.");
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("MAIN: Program started.");
+    println!("MAIN: Testing configuration.");
+    configuration_handler::test_configuration()?;
+    println!("MAIN: Configuration loaded.");
+    println!("MAIN: Initializing DB pool.");
+    let pool = db_handler::init_db().await?;
+    println!("MAIN: Starting threads");
+    run_threads(Arc::new(pool)).await?;
+    Ok(())
+
+    // ThreadPool
+}
+
+async fn run_threads(pool: Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>> {
+    let pool_tcp_clone = pool.clone();
+    let (kafka_thread_sender, kafka_thread_receiver) = tokio::sync::mpsc::channel(100);
+    let api_listener_thread_handler = tokio::spawn(async move {
+        println!("RUN_THREADS: Starting API listener thread.");
+        let _ = init_request_handler(pool_tcp_clone, kafka_thread_sender)
+            .expect("Error in the HTTP Server.")
+            .await;
     });
     let kafka_thread_handler = tokio::spawn(async {
-        println!("MAIN: Starting KAFKA thread.");
-        init_kafka().await;
+        println!("RUN_THREADS: Starting KAFKA thread.");
+        init_kafka(kafka_thread_receiver).await;
     });
-
-    tokio::try_join!(tcp_listener_thread_handler, kafka_thread_handler).expect("MAIN: Some error occured in the thread.");
+    tokio::try_join!(api_listener_thread_handler, kafka_thread_handler)
+        .expect("RUN_THREADS: Some error occured in the thread.");
     Ok(())
 }
 
-fn init_listener(pool: Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
-    let listener =
-        TcpListener::bind(format!("0.0.0.0:{}", configuration::get_self_port())).expect("TCP_LISTENER_INIT: Error while initializing the TCP Listener.");
-    for stream in listener.incoming() {
-        let stream = stream.expect("TCP_LISTENER: Error in stream while receiving a message.");
-        // thread::spawn(|| {
-        handle_client(stream, &pool)?;
-        // });
-    }
-    Ok(())
-}
-
-#[derive(Deserialize, Debug, Serialize)]
-struct TestZot {
-    zot: u8,
-}
-
-#[derive(Deserialize, Debug, Serialize)]
-struct TestBar {
-    bar: TestZot,
-}
-
-#[derive(Deserialize, Debug, Serialize)]
-struct TestFoo {
-    foo: TestBar,
-}
-
-impl Default for TestFoo {
-    fn default() -> Self {
-        TestFoo {
-            foo: TestBar {
-                bar: TestZot { zot: 0 },
-            },
-        }
-    }
-}
-
-fn handle_client(mut stream: TcpStream, pool: &Arc<Pool<Postgres>>) -> Result<(), Box<dyn std::error::Error>>{
-    let request: Request<()> = http_handler::read_from_stream(&mut stream)?;
-    println!("Extracted value: {:?}", request.body());
-    api::forward_incoming_request(request, pool, stream)?;
-    Ok(())
+fn init_request_handler(
+    pool: Arc<Pool<Postgres>>,
+    kafka_thread_sender: Sender<KafkaChannelMessage>,
+) -> Result<Server, Box<dyn std::error::Error>> {
+    Ok(HttpServer::new(move || {
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(kafka_thread_sender.clone()))
+            .service(hello)
+            .service(echo)
+            .route("/hey", web::get().to(api_handler::manual_hello))
+    })
+    .disable_signals()
+    .bind(("127.0.0.1", 7878))?
+    .run())
 }
