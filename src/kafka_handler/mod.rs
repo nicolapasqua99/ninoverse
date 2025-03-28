@@ -13,7 +13,7 @@ use rdkafka::{
 use futures::TryStreamExt;
 
 use structs::KafkaNinoverseBrokerContext;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{
     KafkaChannelMessage,
@@ -73,7 +73,7 @@ async fn handle_kafka_message(message: rdkafka::message::OwnedMessage) -> Result
             .unwrap_or_else(|_| "MESSAGE: Invalid UTF-8 array for payload value.".to_string());
     };
     println!(
-        "MESSAGE: {}:{}/{}/{}/{:?}: {}",
+        "MESSAGE: {}:{}/{}/{}/{}: {}",
         message.topic(),
         message.partition(),
         message.offset(),
@@ -84,13 +84,13 @@ async fn handle_kafka_message(message: rdkafka::message::OwnedMessage) -> Result
     Ok(())
 }
 
-async fn init_kafka_consumer(kafka_thread_channel_sender: Sender<u8>) {
+async fn init_kafka_consumer(kafka_thread_channel_sender: Sender<KafkaChannelMessage>) {
     let consumer = create_kafka_consumer()
         .await
         .expect("Error in creating consumer");
     println!("CONSUMER: Thread started, creating stream and consuming it.");
     kafka_thread_channel_sender
-        .send(0)
+        .send(KafkaChannelMessage::KafkaConsumerStarted)
         .await
         .expect("CONSUMER: Error in sending message to producer thread");
     consumer
@@ -100,30 +100,33 @@ async fn init_kafka_consumer(kafka_thread_channel_sender: Sender<u8>) {
         .expect("CONSUMER: Error in consuming stream");
 }
 
-async fn init_kafka_producer(
-    mut kafka_thread_channel_receiver: Receiver<u8>,
-    mut kafka_thread_receiver: Receiver<KafkaChannelMessage>,
-) {
+async fn init_kafka_producer(mut kafka_thread_receiver: Receiver<KafkaChannelMessage>) {
     let producer = create_kafka_producer()
         .await
         .expect("Error in creating producer");
     loop {
         println!("PRODUCER: Thread waiting for consumer to start.");
-        kafka_thread_channel_receiver.recv().await;
+        kafka_thread_receiver.recv().await.inspect(|message| {
+            if let KafkaChannelMessage::KafkaConsumerError = message {
+                println!("PRODUCER: Received an error in consumer start.")
+            }
+        });
         break;
     }
     println!("PRODUCER: Thread started, sending messages.");
     while let Some(received) = kafka_thread_receiver.recv().await {
-        let queue_timeout = std::time::Duration::from_secs(1);
-        let key = received.sender;
-        let payload = format!("Message: {}", received.content);
-        let record = FutureRecord::to("ninoverse")
-            .payload(payload.as_str())
-            .key(key.as_str());
-        producer
-            .send(record, queue_timeout)
-            .await
-            .expect("Error in sending message");
+        if let KafkaChannelMessage::Message { sender, content } = received {
+            let queue_timeout = std::time::Duration::from_secs(1);
+            let key = sender;
+            let payload = format!("Message: {}", content);
+            let record = FutureRecord::to("ninoverse")
+                .payload(payload.as_str())
+                .key(key.as_str());
+            producer
+                .send(record, queue_timeout)
+                .await
+                .expect("Error in sending message");
+        }
     }
 }
 
@@ -165,17 +168,19 @@ async fn init_kafka_topics(admin_client: AdminClient<KafkaNinoverseBrokerContext
     }
 }
 
-pub async fn init_kafka(kafka_thread_receiver: Receiver<KafkaChannelMessage>) {
+pub async fn init_kafka(
+    kafka_thread_sender: Sender<KafkaChannelMessage>,
+    kafka_thread_receiver: Receiver<KafkaChannelMessage>,
+) {
     let admin_client = create_kafka_admin_client()
         .await
         .expect("INIT_KAFKA: Admin client creation failed");
     init_kafka_topics(admin_client).await;
-    let (kafka_thread_channel_sender, kafka_thread_channel_receiver) = channel::<u8>(1);
     let consumer_handle = tokio::spawn(async {
-        init_kafka_consumer(kafka_thread_channel_sender).await;
+        init_kafka_consumer(kafka_thread_sender).await;
     });
     let producer_handle = tokio::spawn(async {
-        init_kafka_producer(kafka_thread_channel_receiver, kafka_thread_receiver).await;
+        init_kafka_producer(kafka_thread_receiver).await;
     });
     tokio::try_join!(producer_handle, consumer_handle).expect("Error in Kafka threads");
 }
